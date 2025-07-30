@@ -203,6 +203,7 @@ expressApp.post('/send-closeout-message', async (req, res) => {
 expressApp.get('/', (req, res) => res.send('Computron is alive!'));
 
 (async () => {
-  await app.start();
-  console.log('⚡ Computron is running with merged Bolt and Express.');
+  const port = process.env.PORT || 3000;
+  await app.start(port);
+  console.log(`⚡ Computron is running on port ${port}`);
 })();
