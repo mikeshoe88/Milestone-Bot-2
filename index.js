@@ -30,6 +30,8 @@ const FORM_CUSTOMER_ENTRY = '&entry.1275810596=';
 const MOISTURE_FORM_BASE_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSeDAvJ0Ho7gdZTBm-04PnM-dmaNiu3VpqnH4EMyiQkwQQCSuA/viewform?usp=pp_url&entry.931803057=';
 const PIPEDRIVE_API_TOKEN = process.env.PIPEDRIVE_API_TOKEN;
 
+const recentlyStarted = new Set();
+
 function extractDealIdFromChannelName(name) {
   const match = name.match(/deal(\d+)/);
   return match ? match[1] : null;
@@ -78,12 +80,21 @@ async function runStartWorkflow(channelId, client) {
 app.event('member_joined_channel', async ({ event, client }) => {
   try {
     if (event.user === 'USLACKBOT') return;
+
     const channelId = event.channel;
+    if (recentlyStarted.has(channelId)) {
+      console.log(`🟡 Skipping duplicate start for ${channelId}`);
+      return;
+    }
+
     const info = await client.conversations.info({ channel: channelId });
     const channelName = info.channel?.name || '';
 
     if (channelName.includes('deal')) {
-      console.log('⏳ Waiting 5 seconds before attempting start...');
+      recentlyStarted.add(channelId);
+      setTimeout(() => recentlyStarted.delete(channelId), 10000); // Forget after 10 sec
+
+      console.log('⏳ Starting workflow after 5 sec...');
       await new Promise(resolve => setTimeout(resolve, 5000));
       await runStartWorkflow(channelId, client);
     }
