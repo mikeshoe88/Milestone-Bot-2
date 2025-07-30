@@ -1,16 +1,20 @@
-// Computron Slack Bot for Railway — with proper /slack/events mounting
+// Computron Slack Bot with Express Receiver (No socketMode)
 const { App, ExpressReceiver } = require('@slack/bolt');
 const express = require('express');
 const dayjs = require('dayjs');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-process.on('unhandledRejection', (err) => console.error('🔴 Unhandled Rejection:', err));
-process.on('uncaughtException', (err) => console.error('🔴 Uncaught Exception:', err));
+process.on('unhandledRejection', (err) => {
+  console.error('🔴 Unhandled Rejection:', err);
+});
 
-// ✅ Mount ExpressReceiver at /slack/events so Slack’s challenge check works
+process.on('uncaughtException', (err) => {
+  console.error('🔴 Uncaught Exception:', err);
+});
+
 const expressReceiver = new ExpressReceiver({
   signingSecret: process.env.SLACK_SIGNING_SECRET,
-  endpoints: '/slack/events',
+  endpoints: '/',
 });
 
 const app = new App({
@@ -126,6 +130,7 @@ app.action('select_crew_chief', async ({ ack, body, client }) => {
       });
 
       const noteResult = await noteResponse.json();
+
       if (!noteResult.success) {
         console.error('❌ Failed to post Crew Chief note to Pipedrive:', JSON.stringify(noteResult, null, 2));
       } else {
@@ -139,6 +144,13 @@ app.action('select_crew_chief', async ({ ack, body, client }) => {
 
 const expressApp = expressReceiver.app;
 expressApp.use(express.json());
+
+// Handle Slack URL verification challenge
+expressApp.post('/slack/events', (req, res) => {
+  if (req.body?.type === 'url_verification') {
+    return res.status(200).send(req.body.challenge);
+  }
+});
 
 expressApp.post('/trigger-mc-form', async (req, res) => {
   const jobNumber = req.body?.jobNumber;
@@ -157,7 +169,7 @@ expressApp.post('/trigger-mc-form', async (req, res) => {
   try {
     await app.client.chat.postMessage({
       channel,
-      text: `🦢 Please fill out the *${formTitle}* for *${jobNumber}*:\n<${formLink}|Moisture Check Form>`
+      text: `🧪 Please fill out the *${formTitle}* for *${jobNumber}*:\n<${formLink}|Moisture Check Form>`
     });
 
     console.log(`✅ MC${mcCount} form posted to #${channel}`);
@@ -188,11 +200,9 @@ expressApp.post('/send-closeout-message', async (req, res) => {
   }
 });
 
-// Health check
 expressApp.get('/', (req, res) => res.send('Computron is alive!'));
 
 (async () => {
-  const port = process.env.PORT || 3000;
-  await app.start(port);
-  console.log(`⚡ Computron is running on port ${port}`);
+  await app.start();
+  console.log('⚡ Computron is running with merged Bolt and Express.');
 })();
