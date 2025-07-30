@@ -157,7 +157,7 @@ expressApp.post('/trigger-mc-form', async (req, res) => {
   try {
     await app.client.chat.postMessage({
       channel,
-      text: `🧪 Please fill out the *${formTitle}* for *${jobNumber}*:\n<${formLink}|Moisture Check Form>`
+      text: `🦢 Please fill out the *${formTitle}* for *${jobNumber}*:\n<${formLink}|Moisture Check Form>`
     });
 
     console.log(`✅ MC${mcCount} form posted to #${channel}`);
