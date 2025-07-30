@@ -51,12 +51,12 @@ async function runStartWorkflow(channelId, client) {
 
     await client.chat.postMessage({
       channel: channelId,
-      text: `📋 Please fill out the *Initial Loss Note* form for *${jobNumber}*:\n<${formLink}|Initial Loss Note Form>`
+      text: `\ud83d\udccb Please fill out the *Initial Loss Note* form for *${jobNumber}*:\n<${formLink}|Initial Loss Note Form>`
     });
 
     await client.chat.postMessage({
       channel: channelId,
-      text: `Who is the assigned 👷 *Crew Chief*?`,
+      text: `Who is the assigned \ud83d\udc77 *Crew Chief*?`,
       blocks: [
         {
           type: 'section',
@@ -69,7 +69,7 @@ async function runStartWorkflow(channelId, client) {
       ]
     });
   } catch (err) {
-    console.error('❌ Fatal error in runStartWorkflow():', err);
+    console.error('\u274c Fatal error in runStartWorkflow():', err);
   }
 }
 
@@ -81,12 +81,12 @@ app.event('member_joined_channel', async ({ event, client }) => {
     const channelName = info.channel?.name || '';
 
     if (channelName.includes('deal')) {
-      console.log('⏳ Waiting 5 seconds before attempting start...');
+      console.log('\u23f3 Waiting 5 seconds before attempting start...');
       await new Promise(resolve => setTimeout(resolve, 5000));
       await runStartWorkflow(channelId, client);
     }
   } catch (err) {
-    console.error('❌ Error in member_joined_channel handler:', err);
+    console.error('\u274c Error in member_joined_channel handler:', err);
   }
 });
 
@@ -110,14 +110,14 @@ app.action('select_crew_chief', async ({ ack, body, client }) => {
 
     await client.chat.postMessage({
       channel,
-      text: `👷 Crew Chief assigned is *${crewChiefName}*`
+      text: `\ud83d\udc77 Crew Chief assigned is *${crewChiefName}*`
     });
 
     try {
       await client.conversations.invite({ channel, users: selectedUserId });
     } catch (err) {
       if (err.data?.error !== 'already_in_channel') {
-        console.warn('⚠️ Crew Chief invite error:', err);
+        console.warn('\u26a0\ufe0f Crew Chief invite error:', err);
       }
     }
 
@@ -132,13 +132,13 @@ app.action('select_crew_chief', async ({ ack, body, client }) => {
       const noteResult = await noteResponse.json();
 
       if (!noteResult.success) {
-        console.error('❌ Failed to post Crew Chief note to Pipedrive:', JSON.stringify(noteResult, null, 2));
+        console.error('\u274c Failed to post Crew Chief note to Pipedrive:', JSON.stringify(noteResult, null, 2));
       } else {
-        console.log(`✅ Crew Chief logged to deal ${dealId}`);
+        console.log(`\u2705 Crew Chief logged to deal ${dealId}`);
       }
     }
   } catch (error) {
-    console.error('❌ Error in crew chief assignment:', error);
+    console.error('\u274c Error in crew chief assignment:', error);
   }
 });
 
@@ -151,24 +151,24 @@ expressApp.post('/trigger-mc-form', async (req, res) => {
   const formDate = typeof req.body?.formDate === 'string' ? req.body.formDate : 'DATE_MISSING';
 
   if (!jobNumber || !jobNumber.toLowerCase().includes('deal')) {
-    console.warn(`⚠️ Invalid or missing job number received: ${jobNumber}`);
+    console.warn(`\u26a0\ufe0f Invalid or missing job number received: ${jobNumber}`);
     return res.status(400).send('Invalid job number');
   }
 
   const channel = jobNumber.toLowerCase();
-  const formTitle = `Moisture Check ${mcCount} – ${formDate}`;
+  const formTitle = `Moisture Check ${mcCount} \u2013 ${formDate}`;
   const formLink = `${MOISTURE_FORM_BASE_URL}${encodeURIComponent(jobNumber)}`;
 
   try {
     await app.client.chat.postMessage({
       channel,
-      text: `🧪 Please fill out the *${formTitle}* for *${jobNumber}*:\n<${formLink}|Moisture Check Form>`
+      text: `\ud83e\uddea Please fill out the *${formTitle}* for *${jobNumber}*:\n<${formLink}|Moisture Check Form>`
     });
 
-    console.log(`✅ MC${mcCount} form posted to #${channel}`);
+    console.log(`\u2705 MC${mcCount} form posted to #${channel}`);
     res.status(200).send('Moisture form posted');
   } catch (err) {
-    console.error(`❌ Failed to post MC${mcCount} to #${channel}:`, err);
+    console.error(`\u274c Failed to post MC${mcCount} to #${channel}:`, err);
     res.status(500).send('Slack post failed');
   }
 });
@@ -176,24 +176,32 @@ expressApp.post('/trigger-mc-form', async (req, res) => {
 expressApp.post('/send-closeout-message', async (req, res) => {
   const jobNumber = req.body?.jobNumber;
   if (!jobNumber || !jobNumber.toLowerCase().includes('deal')) {
-    console.warn(`⚠️ Invalid job number for closeout message: ${jobNumber}`);
+    console.warn(`\u26a0\ufe0f Invalid job number for closeout message: ${jobNumber}`);
     return res.status(400).send('Invalid job number');
   }
 
   const channel = jobNumber.toLowerCase();
-  const message = `✅ Job completed for *${jobNumber}*\nPlease ensure all closeout forms are sent for file packaging.`;
+  const message = `\u2705 Job completed for *${jobNumber}*\nPlease ensure all closeout forms are sent for file packaging.`;
 
   try {
     await app.client.chat.postMessage({ channel, text: message });
-    console.log(`📦 Closeout message sent to #${channel}`);
+    console.log(`\ud83d\udce6 Closeout message sent to #${channel}`);
     res.status(200).send('Closeout message sent');
   } catch (err) {
-    console.error(`❌ Failed to send closeout message to #${channel}:`, err);
+    console.error(`\u274c Failed to send closeout message to #${channel}:`, err);
     res.status(500).send('Slack post failed');
   }
 });
 
 expressApp.get('/', (req, res) => res.send('Computron is alive!'));
+
+// Slack Challenge Verification for Event Subscription
+expressApp.post('/slack/events', async (req, res) => {
+  if (req.body?.type === 'url_verification') {
+    return res.status(200).send(req.body.challenge);
+  }
+  res.status(200).send();
+});
 
 (async () => {
   await app.start();
