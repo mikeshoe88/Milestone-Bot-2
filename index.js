@@ -1,12 +1,18 @@
-// Computron Slack Bot with ExpressReceiver (No Socket Mode)
+// Computron Slack Bot – Complete Server with Challenge Handling (Railway Compatible)
 const { App, ExpressReceiver } = require('@slack/bolt');
 const express = require('express');
 const dayjs = require('dayjs');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-process.on('unhandledRejection', (err) => console.error('🔴 Unhandled Rejection:', err));
-process.on('uncaughtException', (err) => console.error('🔴 Uncaught Exception:', err));
+// Error logging
+process.on('unhandledRejection', (err) => {
+  console.error('🔴 Unhandled Rejection:', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('🔴 Uncaught Exception:', err);
+});
 
+// Slack tokens
 const expressReceiver = new ExpressReceiver({
   signingSecret: process.env.SLACK_SIGNING_SECRET,
   endpoints: '/',
@@ -18,6 +24,7 @@ const app = new App({
   receiver: expressReceiver,
 });
 
+// Constants
 const FORM_BASE_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSey29MpuufCPAn55zRTSK1ZtGF3f9411ey6vn0bQJtArCS8dw/viewform?usp=pp_url&entry.703689566=';
 const FORM_CUSTOMER_ENTRY = '&entry.1275810596=';
 const MOISTURE_FORM_BASE_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSeDAvJ0Ho7gdZTBm-04PnM-dmaNiu3VpqnH4EMyiQkwQQCSuA/viewform?usp=pp_url&entry.931803057=';
@@ -74,6 +81,7 @@ app.event('member_joined_channel', async ({ event, client }) => {
     const channelId = event.channel;
     const info = await client.conversations.info({ channel: channelId });
     const channelName = info.channel?.name || '';
+
     if (channelName.includes('deal')) {
       console.log('⏳ Waiting 5 seconds before attempting start...');
       await new Promise(resolve => setTimeout(resolve, 5000));
@@ -135,21 +143,18 @@ app.action('select_crew_chief', async ({ ack, body, client }) => {
   }
 });
 
-// Express handlers
 const expressApp = expressReceiver.app;
 expressApp.use(express.json());
 
-// 🔧 URL Verification Handler for Slack
-expressApp.post('/slack/events', (req, res) => {
-  const { type, challenge } = req.body;
-  if (type === 'url_verification') {
-    console.log('✅ Slack URL verification passed');
-    return res.status(200).send(challenge);
+// Slack challenge verification for Event Subscriptions
+expressApp.post('/slack/events', async (req, res) => {
+  if (req.body?.type === 'url_verification') {
+    return res.status(200).send(req.body.challenge);
   }
-  // If not challenge, hand off to Bolt
-  expressReceiver.requestListener(req, res);
+  return expressReceiver.router(req, res);
 });
 
+// POST moisture form
 expressApp.post('/trigger-mc-form', async (req, res) => {
   const jobNumber = req.body?.jobNumber;
   const mcCount = req.body?.mcCount || 1;
@@ -169,6 +174,7 @@ expressApp.post('/trigger-mc-form', async (req, res) => {
       channel,
       text: `🧪 Please fill out the *${formTitle}* for *${jobNumber}*:\n<${formLink}|Moisture Check Form>`
     });
+
     console.log(`✅ MC${mcCount} form posted to #${channel}`);
     res.status(200).send('Moisture form posted');
   } catch (err) {
@@ -177,6 +183,7 @@ expressApp.post('/trigger-mc-form', async (req, res) => {
   }
 });
 
+// Closeout message
 expressApp.post('/send-closeout-message', async (req, res) => {
   const jobNumber = req.body?.jobNumber;
   if (!jobNumber || !jobNumber.toLowerCase().includes('deal')) {
@@ -197,9 +204,11 @@ expressApp.post('/send-closeout-message', async (req, res) => {
   }
 });
 
+// Root endpoint for Railway health check
 expressApp.get('/', (req, res) => res.send('Computron is alive!'));
 
 (async () => {
-  await app.start(process.env.PORT || 3000);
-  console.log('⚡ Computron is running and listening for Slack events');
+  const PORT = process.env.PORT || 3000;
+  await app.start(PORT);
+  console.log(`⚡ Computron is running on port ${PORT}`);
 })();
