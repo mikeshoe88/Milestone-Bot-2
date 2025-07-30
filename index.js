@@ -6,7 +6,6 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 process.on('unhandledRejection', (err) => {
   console.error('🔴 Unhandled Rejection:', err);
 });
-
 process.on('uncaughtException', (err) => {
   console.error('🔴 Uncaught Exception:', err);
 });
@@ -144,7 +143,6 @@ app.action('select_crew_chief', async ({ ack, body, client }) => {
 });
 
 const expressApp = expressReceiver.app;
-
 expressApp.use(express.json());
 
 expressApp.post('/trigger-mc-form', async (req, res) => {
@@ -197,7 +195,10 @@ expressApp.post('/send-closeout-message', async (req, res) => {
 
 expressApp.get('/', (req, res) => res.send('Computron is alive!'));
 
+const PORT = process.env.PORT || 3000;
 (async () => {
   await app.start();
-  console.log('⚡ Computron is running with merged Bolt and Express.');
+  expressApp.listen(PORT, () => {
+    console.log(`⚡ Computron is running on port ${PORT}`);
+  });
 })();
