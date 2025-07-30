@@ -1,3 +1,4 @@
+// Computron Slack Bot with Express Receiver (No socketMode)
 const { App, ExpressReceiver } = require('@slack/bolt');
 const express = require('express');
 const dayjs = require('dayjs');
@@ -6,26 +7,25 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 process.on('unhandledRejection', (err) => {
   console.error('🔴 Unhandled Rejection:', err);
 });
+
 process.on('uncaughtException', (err) => {
   console.error('🔴 Uncaught Exception:', err);
 });
 
 const expressReceiver = new ExpressReceiver({
-  signingSecret: process.env.SIGNING_SECRET,
-  endpoints: '/', // catch-all for express
+  signingSecret: process.env.SLACK_SIGNING_SECRET,
+  endpoints: '/',
 });
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
-  socketMode: true,
-  appToken: process.env.SLACK_APP_TOKEN,
+  signingSecret: process.env.SLACK_SIGNING_SECRET,
   receiver: expressReceiver,
 });
 
 const FORM_BASE_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSey29MpuufCPAn55zRTSK1ZtGF3f9411ey6vn0bQJtArCS8dw/viewform?usp=pp_url&entry.703689566=';
 const FORM_CUSTOMER_ENTRY = '&entry.1275810596=';
 const MOISTURE_FORM_BASE_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSeDAvJ0Ho7gdZTBm-04PnM-dmaNiu3VpqnH4EMyiQkwQQCSuA/viewform?usp=pp_url&entry.931803057=';
-
 const PIPEDRIVE_API_TOKEN = process.env.PIPEDRIVE_API_TOKEN;
 
 function extractDealIdFromChannelName(name) {
@@ -195,10 +195,7 @@ expressApp.post('/send-closeout-message', async (req, res) => {
 
 expressApp.get('/', (req, res) => res.send('Computron is alive!'));
 
-const PORT = process.env.PORT || 3000;
 (async () => {
   await app.start();
-  expressApp.listen(PORT, () => {
-    console.log(`⚡ Computron is running on port ${PORT}`);
-  });
+  console.log('⚡ Computron is running with merged Bolt and Express.');
 })();
