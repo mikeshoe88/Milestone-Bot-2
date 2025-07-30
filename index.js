@@ -126,14 +126,6 @@ app.action('select_crew_chief', async ({ ack, body, client }) => {
       text: `👷 Crew Chief assigned is *${crewChiefName}*`
     });
 
-    try {
-      await client.conversations.invite({ channel, users: selectedUserId });
-    } catch (err) {
-      if (err.data?.error !== 'already_in_channel') {
-        console.warn('⚠️ Crew Chief invite error:', err);
-      }
-    }
-
     if (dealId) {
       const noteContent = `Crew Chief assigned is: ${crewChiefName}`;
       const noteResponse = await fetch(`https://api.pipedrive.com/v1/notes?api_token=${PIPEDRIVE_API_TOKEN}`, {
