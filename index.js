@@ -16,7 +16,7 @@ const expressReceiver = new ExpressReceiver({
   signingSecret: process.env.SLACK_SIGNING_SECRET,
   endpoints: '/slack/events',
   processBeforeResponse: true,
-  bodyParser: false // 🔥 required for Slack's raw body verification
+  bodyParser: false
 });
 
 const app = new App({
@@ -92,7 +92,7 @@ app.event('member_joined_channel', async ({ event, client }) => {
 
     if (channelName.includes('deal')) {
       recentlyStarted.add(channelId);
-      setTimeout(() => recentlyStarted.delete(channelId), 10000); // Forget after 10 sec
+      setTimeout(() => recentlyStarted.delete(channelId), 10000);
 
       console.log('⏳ Starting workflow after 5 sec...');
       await new Promise(resolve => setTimeout(resolve, 5000));
@@ -108,7 +108,7 @@ app.command('/start', async ({ command, ack, client }) => {
   await runStartWorkflow(command.channel_id, client);
 });
 
-app.action('select_crew_chief', async ({ ack, body, client }) => {
+app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
   await ack();
   const channel = body.channel.id;
   const selectedUserId = body.actions[0].selected_user;
@@ -119,7 +119,9 @@ app.action('select_crew_chief', async ({ ack, body, client }) => {
     const dealId = extractDealIdFromChannelName(channelName);
 
     const userInfo = await client.users.info({ user: selectedUserId });
-    const crewChiefName = userInfo.user.real_name || userInfo.user.profile.display_name || `<@${selectedUserId}>`;
+    const crewChiefName = userInfo?.user?.real_name || userInfo?.user?.profile?.display_name || userInfo?.user?.name || `<@${selectedUserId}>`;
+
+    logger.info(`✅ Crew Chief selected: ${crewChiefName} for channel ${channelName}`);
 
     await client.chat.postMessage({
       channel,
@@ -128,22 +130,23 @@ app.action('select_crew_chief', async ({ ack, body, client }) => {
 
     if (dealId) {
       const noteContent = `Crew Chief assigned is: ${crewChiefName}`;
-      const noteResponse = await fetch(`https://api.pipedrive.com/v1/notes?api_token=${PIPEDRIVE_API_TOKEN}`, {
+      const response = await fetch(`https://api.pipedrive.com/v1/notes?api_token=${PIPEDRIVE_API_TOKEN}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: noteContent, deal_id: dealId })
       });
 
-      const noteResult = await noteResponse.json();
-
-      if (!noteResult.success) {
-        console.error('❌ Failed to post Crew Chief note to Pipedrive:', JSON.stringify(noteResult, null, 2));
+      const result = await response.json();
+      if (!result.success) {
+        console.error('❌ Failed to post Crew Chief note to Pipedrive:', result);
       } else {
         console.log(`✅ Crew Chief logged to deal ${dealId}`);
       }
+    } else {
+      console.warn(`⚠️ Could not extract deal ID from channel name: ${channelName}`);
     }
   } catch (error) {
-    console.error('❌ Error in crew chief assignment:', error);
+    console.error('❌ Error assigning Crew Chief:', error);
   }
 });
 
