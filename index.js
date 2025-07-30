@@ -1,6 +1,4 @@
-// 🔧 Computron Slack Bot – Auto-Start on Any Bot Join, No Self-Invite, No Retry
-
-const { App } = require('@slack/bolt');
+const { App, ExpressReceiver } = require('@slack/bolt');
 const express = require('express');
 const dayjs = require('dayjs');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
@@ -13,13 +11,16 @@ process.on('uncaughtException', (err) => {
   console.error('🔴 Uncaught Exception:', err);
 });
 
-const server = express();
+const expressReceiver = new ExpressReceiver({
+  signingSecret: process.env.SIGNING_SECRET,
+  endpoints: '/', // catch-all for express
+});
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
-  signingSecret: process.env.SIGNING_SECRET,
   socketMode: true,
   appToken: process.env.SLACK_APP_TOKEN,
+  receiver: expressReceiver,
 });
 
 const FORM_BASE_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSey29MpuufCPAn55zRTSK1ZtGF3f9411ey6vn0bQJtArCS8dw/viewform?usp=pp_url&entry.703689566=';
@@ -142,8 +143,11 @@ app.action('select_crew_chief', async ({ ack, body, client }) => {
   }
 });
 
-// 🔁 Moisture Check Form trigger endpoint
-server.post('/trigger-mc-form', express.json(), async (req, res) => {
+const expressApp = expressReceiver.app;
+
+expressApp.use(express.json());
+
+expressApp.post('/trigger-mc-form', async (req, res) => {
   const jobNumber = req.body?.jobNumber;
   const mcCount = req.body?.mcCount || 1;
   const formDate = typeof req.body?.formDate === 'string' ? req.body.formDate : 'DATE_MISSING';
@@ -171,8 +175,7 @@ server.post('/trigger-mc-form', express.json(), async (req, res) => {
   }
 });
 
-// ✅ New closeout message route
-server.post('/send-closeout-message', express.json(), async (req, res) => {
+expressApp.post('/send-closeout-message', async (req, res) => {
   const jobNumber = req.body?.jobNumber;
   if (!jobNumber || !jobNumber.toLowerCase().includes('deal')) {
     console.warn(`⚠️ Invalid job number for closeout message: ${jobNumber}`);
@@ -183,11 +186,7 @@ server.post('/send-closeout-message', express.json(), async (req, res) => {
   const message = `✅ Job completed for *${jobNumber}*\nPlease ensure all closeout forms are sent for file packaging.`;
 
   try {
-    await app.client.chat.postMessage({
-      channel,
-      text: message
-    });
-
+    await app.client.chat.postMessage({ channel, text: message });
     console.log(`📦 Closeout message sent to #${channel}`);
     res.status(200).send('Closeout message sent');
   } catch (err) {
@@ -196,13 +195,9 @@ server.post('/send-closeout-message', express.json(), async (req, res) => {
   }
 });
 
-server.get('/', (req, res) => res.send('Computron is alive!'));
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🌐 Web server running on port ${PORT}`));
+expressApp.get('/', (req, res) => res.send('Computron is alive!'));
 
 (async () => {
   await app.start();
-  console.log('⚡ Computron is running.');
+  console.log('⚡ Computron is running with merged Bolt and Express.');
 })();
-
