@@ -145,6 +145,11 @@ app.action('select_crew_chief', async ({ ack, body, client }) => {
 const expressApp = expressReceiver.app;
 expressApp.use(express.json());
 
+// Expose GET for Slack event subscription check
+expressApp.get('/slack/events', (req, res) => {
+  res.status(200).send('Slack event route ready');
+});
+
 // Handle Slack URL verification challenge
 expressApp.post('/slack/events', (req, res) => {
   if (req.body?.type === 'url_verification') {
