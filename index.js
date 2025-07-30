@@ -15,6 +15,11 @@ process.on('uncaughtException', (err) => {
 const expressReceiver = new ExpressReceiver({
   signingSecret: process.env.SLACK_SIGNING_SECRET,
   endpoints: '/',
+  processBeforeResponse: true,
+  // 🔥 REQUIRED for Slack event verification to work:
+  bodyParser: false 
+});
+
 });
 
 const app = new App({
