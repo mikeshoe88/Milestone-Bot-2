@@ -157,59 +157,55 @@ expressApp.get('/slack/events', (req, res) => {
   res.status(200).send('Slack event route ready');
 });
 
-expressApp.post('/slack/events', (req, res) => {
-  if (req.body?.type === 'url_verification') {
-    return res.status(200).send(req.body.challenge);
-  } else {
-    res.status(200).end();
-  }
-});
-
-expressApp.post('/trigger-mc-form', async (req, res) => {
-  const jobNumber = req.body?.jobNumber;
-  const mcCount = req.body?.mcCount || 1;
-  const formDate = typeof req.body?.formDate === 'string' ? req.body.formDate : 'DATE_MISSING';
-
-  if (!jobNumber || !jobNumber.toLowerCase().includes('deal')) {
-    console.warn(`⚠️ Invalid or missing job number received: ${jobNumber}`);
-    return res.status(400).send('Invalid job number');
-  }
-
-  const channel = jobNumber.toLowerCase();
-  const formTitle = `Moisture Check ${mcCount} – ${formDate}`;
-  const formLink = `${MOISTURE_FORM_BASE_URL}${encodeURIComponent(jobNumber)}`;
-
+expressApp.post('/deal-created-task', async (req, res) => {
   try {
-    await app.client.chat.postMessage({
-      channel,
-      text: `🧪 Please fill out the *${formTitle}* for *${jobNumber}*:\n<${formLink}|Moisture Check Form>`
+    const deal = req.body?.current;
+    if (!deal || !deal.id) {
+      console.warn('⚠️ Invalid deal payload:', req.body);
+      return res.status(400).send('Missing deal data');
+    }
+
+    const dealId = deal.id;
+    const typeOfService = deal['5b436b45b63857305f9691910b6567351b5517bc'];
+
+    const validServices = [
+      'Water Mitigation',
+      'Fire Cleanup',
+      'Contents',
+      'Biohazard',
+      'General Cleaning',
+      'Duct Cleaning'
+    ];
+
+    if (!validServices.includes(typeOfService)) {
+      console.log(`🔕 Deal ${dealId} type "${typeOfService}" not in target list`);
+      return res.status(200).send('Type of service not applicable');
+    }
+
+    const taskData = {
+      subject: 'Billed/Invoice',
+      type: 'task',
+      deal_id: dealId,
+      due_date: new Date().toISOString().split('T')[0]
+    };
+
+    const taskRes = await fetch(`https://api.pipedrive.com/v1/activities?api_token=${PIPEDRIVE_API_TOKEN}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(taskData)
     });
 
-    console.log(`✅ MC${mcCount} form posted to #${channel}`);
-    res.status(200).send('Moisture form posted');
+    const taskJson = await taskRes.json();
+    if (taskJson.success) {
+      console.log(`✅ Task created for deal ${dealId}`);
+      res.status(200).send('Task created');
+    } else {
+      console.error('❌ Failed to create task:', taskJson);
+      res.status(500).send('Failed to create task');
+    }
   } catch (err) {
-    console.error(`❌ Failed to post MC${mcCount} to #${channel}:`, err);
-    res.status(500).send('Slack post failed');
-  }
-});
-
-expressApp.post('/send-closeout-message', async (req, res) => {
-  const jobNumber = req.body?.jobNumber;
-  if (!jobNumber || !jobNumber.toLowerCase().includes('deal')) {
-    console.warn(`⚠️ Invalid job number for closeout message: ${jobNumber}`);
-    return res.status(400).send('Invalid job number');
-  }
-
-  const channel = jobNumber.toLowerCase();
-  const message = `✅ Job completed for *${jobNumber}*\nPlease ensure all closeout forms are sent for file packaging.`;
-
-  try {
-    await app.client.chat.postMessage({ channel, text: message });
-    console.log(`📦 Closeout message sent to #${channel}`);
-    res.status(200).send('Closeout message sent');
-  } catch (err) {
-    console.error(`❌ Failed to send closeout message to #${channel}:`, err);
-    res.status(500).send('Slack post failed');
+    console.error('❌ Error in /deal-created-task:', err);
+    res.status(500).send('Server error');
   }
 });
 
