@@ -213,49 +213,6 @@ expressApp.post('/send-closeout-message', async (req, res) => {
   }
 });
 
-expressApp.post('/deal-created-task', async (req, res) => {
-  try {
-    const deal = req.body?.current;
-    if (!deal) {
-      console.warn('⚠️ No deal payload received');
-      return res.status(400).send('Missing deal data');
-    }
-
-    const serviceFieldKey = '5b436b45b63857305f9691910b6567351b5517bc';
-    const validServices = ['Water Mitigation', 'Fire Cleanup', 'Contents', 'Biohazard', 'General Cleaning', 'Duct Cleaning'];
-    const serviceValue = deal[serviceFieldKey];
-
-    if (!validServices.includes(serviceValue)) {
-      console.log(`ℹ️ Skipping deal: service type is '${serviceValue}'`);
-      return res.status(200).send('Service type not eligible');
-    }
-
-    const createTask = await fetch(`https://api.pipedrive.com/v1/activities?api_token=${PIPEDRIVE_API_TOKEN}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        subject: 'Billed/Invoice',
-        type: 'task',
-        deal_id: deal.id,
-        due_date: dayjs().format('YYYY-MM-DD'),
-        done: 0
-      })
-    });
-
-    const responseData = await createTask.json();
-    if (!responseData.success) {
-      console.error('❌ Failed to create activity:', responseData);
-      return res.status(500).send('Activity creation failed');
-    }
-
-    console.log(`✅ Activity created for deal ${deal.id}`);
-    res.status(200).send('Activity created');
-  } catch (err) {
-    console.error('❌ Error handling deal-created-task:', err);
-    res.status(500).send('Internal server error');
-  }
-});
-
 expressApp.get('/', (req, res) => res.send('Computron is alive!'));
 
 (async () => {
