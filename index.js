@@ -1,16 +1,11 @@
-// Computron Slack Bot with Express Receiver (No socketMode)
+// Computron Slack Bot with Express Receiver + Deal Creation Webhook Handler
 const { App, ExpressReceiver } = require('@slack/bolt');
 const express = require('express');
 const dayjs = require('dayjs');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-process.on('unhandledRejection', (err) => {
-  console.error('🔴 Unhandled Rejection:', err);
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('🔴 Uncaught Exception:', err);
-});
+process.on('unhandledRejection', (err) => console.error('🔴 Unhandled Rejection:', err));
+process.on('uncaughtException', (err) => console.error('🔴 Uncaught Exception:', err));
 
 const expressReceiver = new ExpressReceiver({
   signingSecret: process.env.SLACK_SIGNING_SECRET,
@@ -80,12 +75,8 @@ async function runStartWorkflow(channelId, client) {
 app.event('member_joined_channel', async ({ event, client }) => {
   try {
     if (event.user === 'USLACKBOT') return;
-
     const channelId = event.channel;
-    if (recentlyStarted.has(channelId)) {
-      console.log(`🟡 Skipping duplicate start for ${channelId}`);
-      return;
-    }
+    if (recentlyStarted.has(channelId)) return;
 
     const info = await client.conversations.info({ channel: channelId });
     const channelName = info.channel?.name || '';
@@ -94,7 +85,6 @@ app.event('member_joined_channel', async ({ event, client }) => {
       recentlyStarted.add(channelId);
       setTimeout(() => recentlyStarted.delete(channelId), 10000);
 
-      console.log('⏳ Starting workflow after 5 sec...');
       await new Promise(resolve => setTimeout(resolve, 5000));
       await runStartWorkflow(channelId, client);
     }
@@ -121,8 +111,6 @@ app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
     const userInfo = await client.users.info({ user: selectedUserId });
     const crewChiefName = userInfo?.user?.real_name || userInfo?.user?.profile?.display_name || userInfo?.user?.name || `<@${selectedUserId}>`;
 
-    logger.info(`✅ Crew Chief selected: ${crewChiefName} for channel ${channelName}`);
-
     await client.chat.postMessage({
       channel,
       text: `👷 Crew Chief assigned is *${crewChiefName}*`
@@ -130,20 +118,11 @@ app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
 
     if (dealId) {
       const noteContent = `Crew Chief assigned is: ${crewChiefName}`;
-      const response = await fetch(`https://api.pipedrive.com/v1/notes?api_token=${PIPEDRIVE_API_TOKEN}`, {
+      await fetch(`https://api.pipedrive.com/v1/notes?api_token=${PIPEDRIVE_API_TOKEN}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: noteContent, deal_id: dealId })
       });
-
-      const result = await response.json();
-      if (!result.success) {
-        console.error('❌ Failed to post Crew Chief note to Pipedrive:', result);
-      } else {
-        console.log(`✅ Crew Chief logged to deal ${dealId}`);
-      }
-    } else {
-      console.warn(`⚠️ Could not extract deal ID from channel name: ${channelName}`);
     }
   } catch (error) {
     console.error('❌ Error assigning Crew Chief:', error);
@@ -153,22 +132,13 @@ app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
 const expressApp = expressReceiver.app;
 expressApp.use(express.json());
 
-expressApp.get('/slack/events', (req, res) => {
-  res.status(200).send('Slack event route ready');
-});
+expressApp.get('/', (req, res) => res.send('Computron is alive!'));
 
 expressApp.post('/deal-created-task', async (req, res) => {
   try {
-    const deal = req.body?.current;
-    if (!deal || !deal.id) {
-      console.warn('⚠️ Invalid deal payload:', req.body);
-      return res.status(400).send('Missing deal data');
-    }
-
-    const dealId = deal.id;
-    const typeOfService = deal['5b436b45b63857305f9691910b6567351b5517bc'];
-
-    const validServices = [
+    const deal = req.body.current;
+    const serviceType = deal['5b436b45b63857305f9691910b6567351b5517bc'];
+    const allowedTypes = [
       'Water Mitigation',
       'Fire Cleanup',
       'Contents',
@@ -177,39 +147,78 @@ expressApp.post('/deal-created-task', async (req, res) => {
       'Duct Cleaning'
     ];
 
-    if (!validServices.includes(typeOfService)) {
-      console.log(`🔕 Deal ${dealId} type "${typeOfService}" not in target list`);
-      return res.status(200).send('Type of service not applicable');
+    if (!allowedTypes.includes(serviceType)) {
+      console.log(`🔕 Skipping task creation for service type: ${serviceType}`);
+      return res.status(200).send('No task created – service not matched');
     }
 
     const taskData = {
       subject: 'Billed/Invoice',
       type: 'task',
-      deal_id: dealId,
-      due_date: new Date().toISOString().split('T')[0]
+      deal_id: deal.id,
+      done: 0,
     };
 
-    const taskRes = await fetch(`https://api.pipedrive.com/v1/activities?api_token=${PIPEDRIVE_API_TOKEN}`, {
+    const response = await fetch(`https://api.pipedrive.com/v1/activities?api_token=${PIPEDRIVE_API_TOKEN}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(taskData)
     });
 
-    const taskJson = await taskRes.json();
-    if (taskJson.success) {
-      console.log(`✅ Task created for deal ${dealId}`);
-      res.status(200).send('Task created');
-    } else {
-      console.error('❌ Failed to create task:', taskJson);
-      res.status(500).send('Failed to create task');
+    const result = await response.json();
+    if (!result.success) {
+      console.error('❌ Failed to create task:', result);
+      return res.status(500).send('Task creation failed');
     }
+
+    console.log(`✅ Created Billed/Invoice task for deal ${deal.id}`);
+    res.status(200).send('Task created');
   } catch (err) {
-    console.error('❌ Error in /deal-created-task:', err);
-    res.status(500).send('Server error');
+    console.error('❌ Error handling /deal-created-task:', err);
+    res.status(500).send('Internal error');
   }
 });
 
-expressApp.get('/', (req, res) => res.send('Computron is alive!'));
+expressApp.post('/trigger-mc-form', async (req, res) => {
+  const jobNumber = req.body?.jobNumber;
+  const mcCount = req.body?.mcCount || 1;
+  const formDate = typeof req.body?.formDate === 'string' ? req.body.formDate : 'DATE_MISSING';
+
+  if (!jobNumber || !jobNumber.toLowerCase().includes('deal')) {
+    return res.status(400).send('Invalid job number');
+  }
+
+  const channel = jobNumber.toLowerCase();
+  const formTitle = `Moisture Check ${mcCount} – ${formDate}`;
+  const formLink = `${MOISTURE_FORM_BASE_URL}${encodeURIComponent(jobNumber)}`;
+
+  try {
+    await app.client.chat.postMessage({
+      channel,
+      text: `🧪 Please fill out the *${formTitle}* for *${jobNumber}*:\n<${formLink}|Moisture Check Form>`
+    });
+    res.status(200).send('Moisture form posted');
+  } catch (err) {
+    res.status(500).send('Slack post failed');
+  }
+});
+
+expressApp.post('/send-closeout-message', async (req, res) => {
+  const jobNumber = req.body?.jobNumber;
+  if (!jobNumber || !jobNumber.toLowerCase().includes('deal')) {
+    return res.status(400).send('Invalid job number');
+  }
+
+  const channel = jobNumber.toLowerCase();
+  const message = `✅ Job completed for *${jobNumber}*\nPlease ensure all closeout forms are sent for file packaging.`;
+
+  try {
+    await app.client.chat.postMessage({ channel, text: message });
+    res.status(200).send('Closeout message sent');
+  } catch (err) {
+    res.status(500).send('Slack post failed');
+  }
+});
 
 (async () => {
   const port = process.env.PORT || 3000;
