@@ -153,6 +153,10 @@ app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
 const expressApp = expressReceiver.app;
 expressApp.use(express.json());
 
+expressApp.get('/slack/events', (req, res) => {
+  res.status(200).send('Slack event route ready');
+});
+
 expressApp.post('/slack/events', (req, res) => {
   if (req.body?.type === 'url_verification') {
     return res.status(200).send(req.body.challenge);
@@ -244,11 +248,11 @@ expressApp.post('/deal-created-task', async (req, res) => {
       return res.status(500).send('Activity creation failed');
     }
 
-    console.log(`✅ Created Billed/Invoice task for deal ${deal.id}`);
-    res.status(200).send('Task created');
+    console.log(`✅ Activity created for deal ${deal.id}`);
+    res.status(200).send('Activity created');
   } catch (err) {
     console.error('❌ Error handling deal-created-task:', err);
-    res.status(500).send('Server error');
+    res.status(500).send('Internal server error');
   }
 });
 
