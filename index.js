@@ -7,7 +7,6 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 process.on('unhandledRejection', (err) => {
   console.error('🔴 Unhandled Rejection:', err);
 });
-
 process.on('uncaughtException', (err) => {
   console.error('🔴 Uncaught Exception:', err);
 });
@@ -25,18 +24,51 @@ const app = new App({
   receiver: expressReceiver,
 });
 
+/* ====== ENV / CONSTANTS ====== */
 const FORM_BASE_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSey29MpuufCPAn55zRTSK1ZtGF3f9411ey6vn0bQJtArCS8dw/viewform?usp=pp_url&entry.703689566=';
 const FORM_CUSTOMER_ENTRY = '&entry.1275810596=';
 const MOISTURE_FORM_BASE_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSeDAvJ0Ho7gdZTBm-04PnM-dmaNiu3VpqnH4EMyiQkwQQCSuA/viewform?usp=pp_url&entry.931803057=';
 const PIPEDRIVE_API_TOKEN = process.env.PIPEDRIVE_API_TOKEN;
 
-const recentlyStarted = new Set();
+/* ====== Identify THIS bot (Computron) ====== */
+let BOT_USER_ID = process.env.COMPUTRON_BOT_USER_ID; // set this in env for speed if you want
+(async () => {
+  if (!BOT_USER_ID) {
+    try {
+      const who = await app.client.auth.test();
+      BOT_USER_ID = who.user_id;
+      console.log('Computron BOT_USER_ID =', BOT_USER_ID);
+    } catch (e) {
+      console.warn('auth.test failed; set COMPUTRON_BOT_USER_ID in env', e?.message || e);
+    }
+  }
+})();
+
+/* ====== One-time-per-channel marker (durable) ====== */
+const ILN_MARKER = '[ILN_INIT_v1]'; // bump version to re-run in old channels
+
+async function channelHasILN(client, channel) {
+  try {
+    const pins = await client.pins.list({ channel });
+    if ((pins?.items || []).some(it => (it.message?.text || '').includes(ILN_MARKER))) return true;
+  } catch {}
+  const hist = await client.conversations.history({ channel, limit: 150 });
+  return (hist?.messages || []).some(m => (m.user === BOT_USER_ID) && (m.text || '').includes(ILN_MARKER));
+}
+
+/* ====== Simple cooldown to avoid double posts if re-invited fast ====== */
+const channelCooldown = new Map(); // channel -> lastPostTs
+const COOLDOWN_MS = 60 * 1000;
+
+/* ====== Helpers ====== */
+const recentlyStarted = new Set(); // short-term duplicate guard you already had
 
 function extractDealIdFromChannelName(name) {
-  const match = name.match(/deal(\d+)/);
+  const match = String(name || '').match(/deal(\d+)/i);
   return match ? match[1] : null;
 }
 
+/* ====== Core workflow (posts marker + pins it) ====== */
 async function runStartWorkflow(channelId, client) {
   try {
     const result = await client.conversations.info({ channel: channelId });
@@ -53,11 +85,14 @@ async function runStartWorkflow(channelId, client) {
 
     const formLink = `${FORM_BASE_URL}${encodeURIComponent(jobNumber)}${FORM_CUSTOMER_ENTRY}${encodeURIComponent(customerName)}`;
 
-    await client.chat.postMessage({
+    // 1) Marker message (durable flag) + pin
+    const markerMsg = await client.chat.postMessage({
       channel: channelId,
-      text: `📋 Please fill out the *Initial Loss Note* form for *${jobNumber}*:\n<${formLink}|Initial Loss Note Form>`
+      text: `${ILN_MARKER} 📋 Please fill out the *Initial Loss Note* form for *${jobNumber}*:\n<${formLink}|Initial Loss Note Form>`
     });
+    try { await client.pins.add({ channel: channelId, timestamp: markerMsg.ts }); } catch {}
 
+    // 2) Crew Chief select
     await client.chat.postMessage({
       channel: channelId,
       text: `Who is the assigned 👷 *Crew Chief*?`,
@@ -77,37 +112,55 @@ async function runStartWorkflow(channelId, client) {
   }
 }
 
+/* ====== Only react when *Computron* joins, once per channel ====== */
 app.event('member_joined_channel', async ({ event, client }) => {
   try {
-    if (event.user === 'USLACKBOT') return;
+    // Only when *this* bot joins (ignore Dispatcher, Zapier, humans)
+    if (!BOT_USER_ID || event.user !== BOT_USER_ID) return;
 
     const channelId = event.channel;
+
+    // Optional: only for channels with "deal" in the name
+    const info = await client.conversations.info({ channel: channelId });
+    const channelName = info.channel?.name || '';
+    if (!/deal/i.test(channelName)) return;
+
+    // Skip if we've already initialized this channel (durable & cooldown guards)
+    if (await channelHasILN(client, channelId)) {
+      console.log(`🟡 ILN already present in #${channelName}; skipping.`);
+      return;
+    }
+    const last = channelCooldown.get(channelId) || 0;
+    if (Date.now() - last < COOLDOWN_MS) return;
+    channelCooldown.set(channelId, Date.now());
+
+    // Short-term duplicate guard you had
     if (recentlyStarted.has(channelId)) {
       console.log(`🟡 Skipping duplicate start for ${channelId}`);
       return;
     }
+    recentlyStarted.add(channelId);
+    setTimeout(() => recentlyStarted.delete(channelId), 10000);
 
-    const info = await client.conversations.info({ channel: channelId });
-    const channelName = info.channel?.name || '';
-
-    if (channelName.includes('deal')) {
-      recentlyStarted.add(channelId);
-      setTimeout(() => recentlyStarted.delete(channelId), 10000);
-
-      console.log('⏳ Starting workflow after 5 sec...');
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      await runStartWorkflow(channelId, client);
-    }
+    console.log('⏳ Starting workflow after 2 sec...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    await runStartWorkflow(channelId, client);
   } catch (err) {
     console.error('❌ Error in member_joined_channel handler:', err);
   }
 });
 
+/* ====== Slash command remains the same ====== */
 app.command('/start', async ({ command, ack, client }) => {
   await ack();
+  // Also respect one-time rule on manual starts
+  if (await channelHasILN(client, command.channel_id)) {
+    return client.chat.postMessage({ channel: command.channel_id, text: 'ℹ️ Initial Loss Note was already posted for this channel.' });
+  }
   await runStartWorkflow(command.channel_id, client);
 });
 
+/* ====== Crew Chief action remains the same ====== */
 app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
   await ack();
   const channel = body.channel.id;
@@ -150,13 +203,13 @@ app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
   }
 });
 
+/* ====== Express routes (unchanged) ====== */
 const expressApp = expressReceiver.app;
 expressApp.use(express.json());
 
 expressApp.get('/slack/events', (req, res) => {
   res.status(200).send('Slack event route ready');
 });
-
 expressApp.post('/slack/events', (req, res) => {
   if (req.body?.type === 'url_verification') {
     return res.status(200).send(req.body.challenge);
@@ -184,7 +237,6 @@ expressApp.post('/trigger-mc-form', async (req, res) => {
       channel,
       text: `🧪 Please fill out the *${formTitle}* for *${jobNumber}*:\n<${formLink}|Moisture Check Form>`
     });
-
     console.log(`✅ MC${mcCount} form posted to #${channel}`);
     res.status(200).send('Moisture form posted');
   } catch (err) {
