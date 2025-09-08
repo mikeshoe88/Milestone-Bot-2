@@ -160,43 +160,58 @@ app.command('/start', async ({ command, ack, client }) => {
   await runStartWorkflow(command.channel_id, client);
 });
 
-/* ====== Crew Chief action remains the same ====== */
+/* ====== Crew Chief action: now auto‑invites selected user ====== */
 app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
   await ack();
-  const channel = body.channel.id;
-  const selectedUserId = body.actions[0].selected_user;
+  const channel = body?.channel?.id || body?.container?.channel_id;
+  const selectedUserId = body?.actions?.[0]?.selected_user || body?.actions?.[0]?.selected_option?.value;
+  if (!channel || !selectedUserId) return;
 
   try {
-    const result = await client.conversations.info({ channel });
-    const channelName = result.channel?.name || 'UNKNOWN';
-    const dealId = extractDealIdFromChannelName(channelName);
-
-    const userInfo = await client.users.info({ user: selectedUserId });
-    const crewChiefName = userInfo?.user?.real_name || userInfo?.user?.profile?.display_name || userInfo?.user?.name || `<@${selectedUserId}>`;
-
-    logger.info(`✅ Crew Chief selected: ${crewChiefName} for channel ${channelName}`);
-
-    await client.chat.postMessage({
-      channel,
-      text: `👷 Crew Chief assigned is *${crewChiefName}*`
-    });
-
-    if (dealId) {
-      const noteContent = `Crew Chief assigned is: ${crewChiefName}`;
-      const response = await fetch(`https://api.pipedrive.com/v1/notes?api_token=${PIPEDRIVE_API_TOKEN}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: noteContent, deal_id: dealId })
-      });
-
-      const result = await response.json();
-      if (!result.success) {
-        console.error('❌ Failed to post Crew Chief note to Pipedrive:', result);
-      } else {
-        console.log(`✅ Crew Chief logged to deal ${dealId}`);
+    // Ensure bot is in channel (join works for public; private requires bot already added)
+    try { await client.conversations.join({ channel }); } catch (e) {
+      const err = e?.data?.error || e?.message;
+      if (!['already_in_channel', 'method_not_supported_for_channel_type', 'not_in_channel'].includes(err)) {
+        logger.warn('[Computron] join warning', err);
       }
-    } else {
-      console.warn(`⚠️ Could not extract deal ID from channel name: ${channelName}`);
+    }
+
+    // Invite the selected Crew Chief
+    try {
+      await client.conversations.invite({ channel, users: selectedUserId });
+      await client.chat.postMessage({ channel, text: `👷 Crew Chief <@${selectedUserId}> has been added to this job channel.` });
+    } catch (e) {
+      const err = e?.data?.error || e?.message;
+      if (['already_in_channel', 'cant_invite_self'].includes(err)) {
+        await client.chat.postMessage({ channel, text: `ℹ️ <@${selectedUserId}> is already in this channel.` });
+      } else if (err === 'not_in_channel') {
+        await client.chat.postMessage({ channel, text: `⚠️ I don't have permission to invite users here. Add me to this private channel and try again.` });
+      } else {
+        logger.error('[Computron] invite failed', err);
+        await client.chat.postMessage({ channel, text: `⚠️ Couldn’t invite that Crew Chief (${err || 'unknown error'}).` });
+      }
+    }
+
+    // Optional: log to Pipedrive as before
+    try {
+      const info = await client.conversations.info({ channel });
+      const channelName = info.channel?.name || 'UNKNOWN';
+      const dealId = extractDealIdFromChannelName(channelName);
+
+      if (dealId) {
+        const userInfo = await client.users.info({ user: selectedUserId });
+        const crewChiefName = userInfo?.user?.real_name || userInfo?.user?.profile?.display_name || userInfo?.user?.name || `<@${selectedUserId}>`;
+        const noteContent = `Crew Chief assigned is: ${crewChiefName}`;
+        const response = await fetch(`https://api.pipedrive.com/v1/notes?api_token=${PIPEDRIVE_API_TOKEN}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: noteContent, deal_id: dealId })
+        });
+        const result = await response.json();
+        if (!result.success) console.error('❌ Failed to post Crew Chief note to Pipedrive:', result);
+      }
+    } catch (e) {
+      logger.warn('[Computron] PD note skip/warn', e?.message || e);
     }
   } catch (error) {
     console.error('❌ Error assigning Crew Chief:', error);
