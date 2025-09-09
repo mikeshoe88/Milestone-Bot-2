@@ -231,7 +231,11 @@ app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
     } catch (e) {
       const err = e?.data?.error || e?.message;
       if (['already_in_channel', 'cant_invite_self'].includes(err)) {
-        await client.chat.postMessage({ channel, text: `ℹ️ <@${selectedUserId}> is already in this channel.`);
+        await client.chat.postMessage({
+  channel,
+  text: `ℹ️ <@${selectedUserId}> is already in this channel.`
+});
+
       } else if (err === 'not_in_channel') {
         await client.chat.postMessage({ channel, text: `⚠️ I don't have permission to invite users here. Add me to this private channel and try again.` });
       } else {
@@ -335,3 +339,4 @@ expressApp.get('/', (req, res) => res.send('Computron is alive!'));
   await app.start(port);
   console.log(`⚡ Computron is running on port ${port}`);
 })();
+
