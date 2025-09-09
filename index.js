@@ -35,6 +35,9 @@ const PIPEDRIVE_API_TOKEN = process.env.PIPEDRIVE_API_TOKEN;
 const ALWAYS_INVITE_USER_IDS = [
   'U07AB7A4UNS', // Anastacio
   'U086RFE5UF2', // Jennifer
+  'U05FYG3EMHS', // Kim
+  'U06DKJ1BJ9W', // Danica
+  'U05FPCPHJG6', // Mike
 ];
 
 // Pipedrive custom field (Estimator)
@@ -339,4 +342,5 @@ expressApp.get('/', (req, res) => res.send('Computron is alive!'));
   await app.start(port);
   console.log(`⚡ Computron is running on port ${port}`);
 })();
+
 
