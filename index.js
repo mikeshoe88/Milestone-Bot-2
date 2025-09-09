@@ -30,6 +30,39 @@ const FORM_CUSTOMER_ENTRY = '&entry.1275810596=';
 const MOISTURE_FORM_BASE_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSeDAvJ0Ho7gdZTBm-04PnM-dmaNiu3VpqnH4EMyiQkwQQCSuA/viewform?usp=pp_url&entry.931803057=';
 const PIPEDRIVE_API_TOKEN = process.env.PIPEDRIVE_API_TOKEN;
 
+/* ====== Auto-invite config ====== */
+// Always add these folks to every deal channel
+const ALWAYS_INVITE_USER_IDS = [
+  'U07AB7A4UNS', // Anastacio
+  'U086RFE5UF2', // Jennifer
+];
+
+// Pipedrive custom field (Estimator)
+const ESTIMATOR_FIELD_KEY = '0c1e4ec54e5c4b814a6cadbf0ed473ead1dff9d4';
+
+// Map estimator display name -> Slack user ID
+const ESTIMATOR_TO_SLACK = {
+  'Kim':    'U05FYG3EMHS',
+  'Danica': 'U06DKJ1BJ9W',
+  'Lamar':  'U086RE5K3LY',
+};
+
+// Helper to invite and ignore harmless errors
+async function safeInvite(client, channel, userIds = []) {
+  if (!channel || !userIds.length) return;
+  const unique = [...new Set(userIds)].filter(Boolean);
+  if (!unique.length) return;
+  try {
+    await client.conversations.invite({ channel, users: unique.join(',') });
+    console.log('👥 Invited users:', unique.join(','));
+  } catch (e) {
+    const err = e?.data?.error || e?.message;
+    if (!['already_in_channel', 'cant_invite_self', 'not_in_channel'].includes(err)) {
+      console.warn('[Computron] invite warning:', err);
+    }
+  }
+}
+
 /* ====== Identify THIS bot (Computron) ====== */
 let BOT_USER_ID = process.env.COMPUTRON_BOT_USER_ID; // set this in env for speed if you want
 (async () => {
@@ -77,10 +110,17 @@ async function runStartWorkflow(channelId, client) {
     const jobNumber = dealId ? channelName : 'UNKNOWN';
 
     let customerName = 'Customer';
+    let estimatorName = null; // <— NEW
     if (dealId) {
       const pipedriveResponse = await fetch(`https://api.pipedrive.com/v1/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`);
       const dealData = await pipedriveResponse.json();
       customerName = dealData?.data?.person_name || 'Customer';
+
+      // Grab estimator from custom field (string or { value })
+      const rawEstimator = dealData?.data?.[ESTIMATOR_FIELD_KEY];
+      estimatorName =
+        (rawEstimator && typeof rawEstimator === 'object' && 'value' in rawEstimator) ? rawEstimator.value :
+        (typeof rawEstimator === 'string' ? rawEstimator : null);
     }
 
     const formLink = `${FORM_BASE_URL}${encodeURIComponent(jobNumber)}${FORM_CUSTOMER_ENTRY}${encodeURIComponent(customerName)}`;
@@ -107,6 +147,14 @@ async function runStartWorkflow(channelId, client) {
         }
       ]
     });
+
+    // 3) Auto-invite: always + estimator (if any)
+    const toInvite = [...ALWAYS_INVITE_USER_IDS];
+    if (estimatorName && ESTIMATOR_TO_SLACK[estimatorName]) {
+      toInvite.push(ESTIMATOR_TO_SLACK[estimatorName]);
+    }
+    await safeInvite(client, channelId, toInvite);
+
   } catch (err) {
     console.error('❌ Fatal error in runStartWorkflow():', err);
   }
@@ -160,7 +208,7 @@ app.command('/start', async ({ command, ack, client }) => {
   await runStartWorkflow(command.channel_id, client);
 });
 
-/* ====== Crew Chief action: now auto‑invites selected user ====== */
+/* ====== Crew Chief action: now auto-invites selected user ====== */
 app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
   await ack();
   const channel = body?.channel?.id || body?.container?.channel_id;
@@ -183,7 +231,7 @@ app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
     } catch (e) {
       const err = e?.data?.error || e?.message;
       if (['already_in_channel', 'cant_invite_self'].includes(err)) {
-        await client.chat.postMessage({ channel, text: `ℹ️ <@${selectedUserId}> is already in this channel.` });
+        await client.chat.postMessage({ channel, text: `ℹ️ <@${selectedUserId}> is already in this channel.`);
       } else if (err === 'not_in_channel') {
         await client.chat.postMessage({ channel, text: `⚠️ I don't have permission to invite users here. Add me to this private channel and try again.` });
       } else {
