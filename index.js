@@ -31,7 +31,6 @@ const MOISTURE_FORM_BASE_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSeDAvJ0
 const PIPEDRIVE_API_TOKEN = process.env.PIPEDRIVE_API_TOKEN;
 
 /* ====== Auto-invite config ====== */
-// Always add these folks to every deal channel
 const ALWAYS_INVITE_USER_IDS = [
   'U07AB7A4UNS', // Anastacio
   'U086RFE5UF2', // Jennifer
@@ -56,6 +55,7 @@ async function safeInvite(client, channel, userIds = []) {
   const unique = [...new Set(userIds)].filter(Boolean);
   if (!unique.length) return;
   try {
+    console.log('📌 Attempting to invite users:', unique);
     await client.conversations.invite({ channel, users: unique.join(',') });
     console.log('👥 Invited users:', unique.join(','));
   } catch (e) {
@@ -67,7 +67,7 @@ async function safeInvite(client, channel, userIds = []) {
 }
 
 /* ====== Identify THIS bot (Computron) ====== */
-let BOT_USER_ID = process.env.COMPUTRON_BOT_USER_ID; // set this in env for speed if you want
+let BOT_USER_ID = process.env.COMPUTRON_BOT_USER_ID;
 (async () => {
   if (!BOT_USER_ID) {
     try {
@@ -80,8 +80,8 @@ let BOT_USER_ID = process.env.COMPUTRON_BOT_USER_ID; // set this in env for spee
   }
 })();
 
-/* ====== One-time-per-channel marker (durable) ====== */
-const ILN_MARKER = '[ILN_INIT_v1]'; // bump version to re-run in old channels
+/* ====== One-time-per-channel marker ====== */
+const ILN_MARKER = '[ILN_INIT_v1]';
 
 async function channelHasILN(client, channel) {
   try {
@@ -92,19 +92,16 @@ async function channelHasILN(client, channel) {
   return (hist?.messages || []).some(m => (m.user === BOT_USER_ID) && (m.text || '').includes(ILN_MARKER));
 }
 
-/* ====== Simple cooldown to avoid double posts if re-invited fast ====== */
-const channelCooldown = new Map(); // channel -> lastPostTs
+/* ====== Cooldown to prevent re-posting ====== */
+const channelCooldown = new Map();
 const COOLDOWN_MS = 60 * 1000;
-
-/* ====== Helpers ====== */
-const recentlyStarted = new Set(); // short-term duplicate guard you already had
+const recentlyStarted = new Set();
 
 function extractDealIdFromChannelName(name) {
-  const match = String(name || '').match(/deal(\d+)/i);
+  const match = String(name || '').match(/deal(\\d+)/i);
   return match ? match[1] : null;
 }
 
-/* ====== Core workflow (posts marker + pins it) ====== */
 async function runStartWorkflow(channelId, client) {
   try {
     const result = await client.conversations.info({ channel: channelId });
@@ -113,13 +110,12 @@ async function runStartWorkflow(channelId, client) {
     const jobNumber = dealId ? channelName : 'UNKNOWN';
 
     let customerName = 'Customer';
-    let estimatorName = null; // <— NEW
+    let estimatorName = null;
     if (dealId) {
       const pipedriveResponse = await fetch(`https://api.pipedrive.com/v1/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`);
       const dealData = await pipedriveResponse.json();
       customerName = dealData?.data?.person_name || 'Customer';
 
-      // Grab estimator from custom field (string or { value })
       const rawEstimator = dealData?.data?.[ESTIMATOR_FIELD_KEY];
       estimatorName =
         (rawEstimator && typeof rawEstimator === 'object' && 'value' in rawEstimator) ? rawEstimator.value :
@@ -128,14 +124,12 @@ async function runStartWorkflow(channelId, client) {
 
     const formLink = `${FORM_BASE_URL}${encodeURIComponent(jobNumber)}${FORM_CUSTOMER_ENTRY}${encodeURIComponent(customerName)}`;
 
-    // 1) Marker message (durable flag) + pin
     const markerMsg = await client.chat.postMessage({
       channel: channelId,
       text: `${ILN_MARKER} 📋 Please fill out the *Initial Loss Note* form for *${jobNumber}*:\n<${formLink}|Initial Loss Note Form>`
     });
     try { await client.pins.add({ channel: channelId, timestamp: markerMsg.ts }); } catch {}
 
-    // 2) Crew Chief select
     await client.chat.postMessage({
       channel: channelId,
       text: `Who is the assigned 👷 *Crew Chief*?`,
@@ -151,7 +145,6 @@ async function runStartWorkflow(channelId, client) {
       ]
     });
 
-    // 3) Auto-invite: always + estimator (if any)
     const toInvite = [...ALWAYS_INVITE_USER_IDS];
     if (estimatorName && ESTIMATOR_TO_SLACK[estimatorName]) {
       toInvite.push(ESTIMATOR_TO_SLACK[estimatorName]);
@@ -163,20 +156,15 @@ async function runStartWorkflow(channelId, client) {
   }
 }
 
-/* ====== Only react when *Computron* joins, once per channel ====== */
 app.event('member_joined_channel', async ({ event, client }) => {
   try {
-    // Only when *this* bot joins (ignore Dispatcher, Zapier, humans)
     if (!BOT_USER_ID || event.user !== BOT_USER_ID) return;
 
     const channelId = event.channel;
-
-    // Optional: only for channels with "deal" in the name
     const info = await client.conversations.info({ channel: channelId });
     const channelName = info.channel?.name || '';
     if (!/deal/i.test(channelName)) return;
 
-    // Skip if we've already initialized this channel (durable & cooldown guards)
     if (await channelHasILN(client, channelId)) {
       console.log(`🟡 ILN already present in #${channelName}; skipping.`);
       return;
@@ -185,7 +173,6 @@ app.event('member_joined_channel', async ({ event, client }) => {
     if (Date.now() - last < COOLDOWN_MS) return;
     channelCooldown.set(channelId, Date.now());
 
-    // Short-term duplicate guard you had
     if (recentlyStarted.has(channelId)) {
       console.log(`🟡 Skipping duplicate start for ${channelId}`);
       return;
@@ -201,17 +188,14 @@ app.event('member_joined_channel', async ({ event, client }) => {
   }
 });
 
-/* ====== Slash command remains the same ====== */
 app.command('/start', async ({ command, ack, client }) => {
   await ack();
-  // Also respect one-time rule on manual starts
   if (await channelHasILN(client, command.channel_id)) {
     return client.chat.postMessage({ channel: command.channel_id, text: 'ℹ️ Initial Loss Note was already posted for this channel.' });
   }
   await runStartWorkflow(command.channel_id, client);
 });
 
-/* ====== Crew Chief action: now auto-invites selected user ====== */
 app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
   await ack();
   const channel = body?.channel?.id || body?.container?.channel_id;
@@ -219,7 +203,6 @@ app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
   if (!channel || !selectedUserId) return;
 
   try {
-    // Ensure bot is in channel (join works for public; private requires bot already added)
     try { await client.conversations.join({ channel }); } catch (e) {
       const err = e?.data?.error || e?.message;
       if (!['already_in_channel', 'method_not_supported_for_channel_type', 'not_in_channel'].includes(err)) {
@@ -227,18 +210,13 @@ app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
       }
     }
 
-    // Invite the selected Crew Chief
     try {
       await client.conversations.invite({ channel, users: selectedUserId });
       await client.chat.postMessage({ channel, text: `👷 Crew Chief <@${selectedUserId}> has been added to this job channel.` });
     } catch (e) {
       const err = e?.data?.error || e?.message;
       if (['already_in_channel', 'cant_invite_self'].includes(err)) {
-        await client.chat.postMessage({
-  channel,
-  text: `ℹ️ <@${selectedUserId}> is already in this channel.`
-});
-
+        await client.chat.postMessage({ channel, text: `ℹ️ <@${selectedUserId}> is already in this channel.` });
       } else if (err === 'not_in_channel') {
         await client.chat.postMessage({ channel, text: `⚠️ I don't have permission to invite users here. Add me to this private channel and try again.` });
       } else {
@@ -247,7 +225,6 @@ app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
       }
     }
 
-    // Optional: log to Pipedrive as before
     try {
       const info = await client.conversations.info({ channel });
       const channelName = info.channel?.name || 'UNKNOWN';
@@ -273,7 +250,6 @@ app.action('select_crew_chief', async ({ ack, body, client, logger }) => {
   }
 });
 
-/* ====== Express routes (unchanged) ====== */
 const expressApp = expressReceiver.app;
 expressApp.use(express.json());
 
@@ -342,5 +318,3 @@ expressApp.get('/', (req, res) => res.send('Computron is alive!'));
   await app.start(port);
   console.log(`⚡ Computron is running on port ${port}`);
 })();
-
-
